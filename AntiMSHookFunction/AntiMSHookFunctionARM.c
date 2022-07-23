@@ -9,6 +9,7 @@
 #include "AntiMSHookFunctionARM.h"
 #include <mach/mach_init.h>
 #include <mach/vm_map.h>
+#include <assert.h>
 
 #ifdef __arm64__
 
@@ -18,14 +19,14 @@ static __attribute__ ((always_inline)) int64_t singExtend(int64_t value) {
     int64_t result = value;
     int64_t sing = value >> (33-1) == 1;
     if (sing) {
-        result = ((1<<31-1) << 33) | value;
+        result = (((1LL<<31LL)-1LL) << 33LL) | value;
     }
     return result;
 }
 static __attribute__ ((always_inline)) uint64_t getAdrpPageBase(void *symbol_addr) {
     uint32_t arm = *(uint32_t *)symbol_addr;
     uint32_t immlo = (arm >> 29) & 3;
-    uint32_t immhiMask = (uint32_t)((1 << 19 - 1) << 5);
+    uint32_t immhiMask = (uint32_t)(((1 << 19) - 1) << 5);
     uint32_t immhi = (arm & immhiMask) >> 5;
     int64_t imm = ((int64_t)(immhi << 2 | immlo) << 12);
     uintptr_t pcBase = ((uintptr_t)symbol_addr >> 12) << 12;
@@ -37,7 +38,7 @@ static __attribute__ ((always_inline)) uint64_t getAddPageOffset(void *symbol_ad
     if (add == 0b10010001) {
         uint32_t add_rn = (arm & (31 << 5)) >> 5;
         uint32_t add_rd = arm & 31;
-        uint32_t add_imm12 = (uint32_t)((arm & ((1 << 12-1) << 10)) >> 10);
+        uint32_t add_imm12 = (uint32_t)((arm & (((1 << 12)-1) << 10)) >> 10);
         uint64_t imm = (uint64_t)add_imm12;
         uint32_t shift = (arm & (3 << 22)) >> 22;
         if (shift == 0) {
@@ -70,7 +71,7 @@ static __attribute__ ((always_inline)) enum MSHookInstruction translateInstructi
     // ldr xt, #imm  (C4.4.5 and C6.2.84)
     uint32_t ldr_register_litetal = (arm & (255 << 24)) >> 24;
     if (ldr_register_litetal == 0b01011000) {
-        uint32_t imm19 = (arm & ((1 << 19 - 1) << 5)) >> 5;
+        uint32_t imm19 = (arm & (((1 << 19) - 1) << 5)) >> 5;
         if ((imm19 << 2) == 8) {
             uint32_t rt = arm & 31;
             if (rt == 16) return ldr_x16;
@@ -93,7 +94,6 @@ static __attribute__ ((always_inline)) enum MSHookInstruction translateInstructi
     uint32_t adrp = (arm & (31 << 24)) >> 24;
     uint32_t rd = arm & (31 << 0);
     if (adrp_op == 1 && adrp == 16) {
-        uint64_t pageBase = getAdrpPageBase(symbol_addr);
         // adrp x17, pageBase
         if (rd == 17) {
             return adrp_x17;
@@ -104,7 +104,7 @@ static __attribute__ ((always_inline)) enum MSHookInstruction translateInstructi
     if (add == 0b10010001) {      // 32-bit: 0b00010001
         uint32_t add_rn = (arm & (31 << 5)) >> 5;
         uint32_t add_rd = arm & 31;
-        uint32_t add_imm12 = (uint32_t)((arm & ((1 << 12-1) << 10)) >> 10);
+        uint32_t add_imm12 = (uint32_t)((arm & (((1 << 12)-1) << 10)) >> 10);
         uint64_t imm = (uint64_t)add_imm12;
         uint32_t shift = (arm & (3 << 22)) >> 22;
         if (shift == 0) {
@@ -130,27 +130,30 @@ _Bool MSHookARMCheck(void *symbol_addr) {
         return 0;
     }
     switch (firstInstruction) {
-    case ldr_x16:
-        void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
-        if (translateInstruction(secondInstructionAddr) == br_x16) {
-            return 1;
+        case ldr_x16: {
+            void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
+            if (translateInstruction(secondInstructionAddr) == br_x16) {
+                return 1;
+            }
+            return 0;
         }
-        return 0;
-    case ldr_x17:
-        void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
-        if (translateInstruction(secondInstructionAddr) == br_x17) {
-            return 1;
+        case ldr_x17: {
+            void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
+            if (translateInstruction(secondInstructionAddr) == br_x17) {
+                return 1;
+            }
+            return 0;
         }
-        return 0;
-    case adrp_x17:
-        void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
-        void *thridInstructionAddr = (void *)((uintptr_t)symbol_addr + 8);
-        if (translateInstruction(secondInstructionAddr) == add_x17 && translateInstruction(thridInstructionAddr) == br_x17) {
-            return 1;
+        case adrp_x17: {
+            void *secondInstructionAddr = (void *)((uintptr_t)symbol_addr + 4);
+            void *thridInstructionAddr = (void *)((uintptr_t)symbol_addr + 8);
+            if (translateInstruction(secondInstructionAddr) == add_x17 && translateInstruction(thridInstructionAddr) == br_x17) {
+                return 1;
+            }
+            return 0;
         }
-        return 0;
-    default:
-        return 0;
+        default:
+            return 0;
     }
 }
 
@@ -165,7 +168,7 @@ void* antiMSHook(void* orig_func) {
     
     enum MSHookInstruction firstInstruction = translateInstruction(orig_func);
     if (firstInstruction == 0) {
-        assert(false, "amIMSHookFunction has judged");
+        assert(false);
         return NULL;
     }
     void *origFunctionBeginAddr = orig_func;
@@ -180,7 +183,7 @@ void* antiMSHook(void* orig_func) {
         origFunctionBeginAddr += 12;
         break;
     default:
-        assert(false, "amIMSHookFunction has judged");
+        assert(false);
         return NULL;
     }
     
@@ -201,7 +204,7 @@ void* antiMSHook(void* orig_func) {
                 if (ldr_x16 == firstInstruction) {
                     // 20: max_buffer_insered_Instruction
                     for (int i = 4; i < 20; i++) {
-                        void *instructionAddr = (void *)((int)region_address + i * 4);
+                        void *instructionAddr = (void *)((int64_t)region_address + i * 4);
                         if (ldr_x16 == translateInstruction(instructionAddr) &&
                             br_x16 == translateInstruction((void *)((uintptr_t)instructionAddr + 4)) &&
                             ((uintptr_t)instructionAddr + 1) == (uintptr_t)origFunctionBeginAddr) {
@@ -212,7 +215,7 @@ void* antiMSHook(void* orig_func) {
                if (ldr_x17 == firstInstruction) {
                     // 20: max_buffer_insered_Instruction
                     for (int i = 4; i < 20; i++) {
-                        void *instructionAddr = (void *)((int)region_address + i * 4);
+                        void *instructionAddr = (void *)((int64_t)region_address + i * 4);
                         if (ldr_x17 == translateInstruction(instructionAddr) &&
                             br_x17 == translateInstruction((void *)((uintptr_t)instructionAddr + 4)) &&
                             ((uintptr_t)instructionAddr + 1) == (uintptr_t)origFunctionBeginAddr) {
@@ -224,10 +227,10 @@ void* antiMSHook(void* orig_func) {
                 if (adrp_x17 == firstInstruction) {
                     // 20: max_buffer_insered_Instruction
                     for (int i = 3; i < 20; i++) {
-                        void *instructionAddr = (void *)((int)region_address + i * 4);
+                        void *instructionAddr = (void *)((int64_t)region_address + i * 4);
                         if (adrp_x17 == translateInstruction(instructionAddr) &&
-                            add_x17 == translateInstruction((void *)((uintptr_t)instructionAddr + 4)),
-                            br_x17 == translateInstruction((void *)((uintptr_t)instructionAddr + 8)),
+                            add_x17 == translateInstruction((void *)((uintptr_t)instructionAddr + 4)) &&
+                            br_x17 == translateInstruction((void *)((uintptr_t)instructionAddr + 8)) &&
                             getAdrpPageBase(instructionAddr)+getAddPageOffset((void *)((uintptr_t)instructionAddr + 4)) == (uint64_t)origFunctionBeginAddr) {
                             return (void *)region_address;
                         }
