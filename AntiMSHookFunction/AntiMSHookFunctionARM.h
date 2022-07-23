@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 
+_Bool MSHookARMCheck(void *symbol_addr);
 void* antiMSHook(void *orig_addr);
 
 #endif /* AntiMSHook_h */
