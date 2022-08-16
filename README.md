@@ -22,8 +22,6 @@ if (orig_antiDebug == NULL) {
 }
 
 void antiDebug() {
-    resetSymbol(@"dlopen");   // anti-fishhook
-    resetSymbol(@"dlsym");    // anti-fishhook
     
     void* handle = dlopen("/usr/lib/libc.dylib", RTLD_NOW);
     void* ptrace = dlsym(handle, "ptrace");
