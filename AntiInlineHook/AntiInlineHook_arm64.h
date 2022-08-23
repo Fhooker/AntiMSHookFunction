@@ -1,21 +1,13 @@
-//
-//  AntiMSHook.c
-//  AntiMSHook
-//
-//  Created by jintao on 2019/9/17.
-//  Copyright © 2019 jintao. All rights reserved.
-//
-
-#ifndef AntiMSHookFunction_h
-#define AntiMSHookFunction_h
+#ifndef AntiInlineHook_h
+#define AntiInlineHook_h
 
 #include <mach/mach_init.h>
 #include <mach/vm_map.h>
 #include <assert.h>
 
-#ifdef __arm64__
-
 // refs: https://github.com/securing/IOSSecuritySuite/blob/master/IOSSecuritySuite/MSHookFunctionChecker.swift
+
+#if defined(__arm64__) || defined(__arm64e__)
 
 static __attribute__ ((always_inline)) int64_t singExtend(int64_t value) {
     int64_t result = value;
@@ -38,8 +30,6 @@ static __attribute__ ((always_inline)) uint64_t getAddPageOffset(void *symbol_ad
     uint32_t arm = *(uint32_t *)symbol_addr;
     uint32_t add = arm >> 24;
     if (add == 0b10010001) {
-        // uint32_t add_rn = (arm & (31 << 5)) >> 5;
-        // uint32_t add_rd = arm & 31;
         uint32_t add_imm12 = (uint32_t)((arm & (((1 << 12) - 1) << 10)) >> 10);
         uint64_t imm = (uint64_t)add_imm12;
         uint32_t shift = (arm & (3 << 22)) >> 22;
@@ -59,7 +49,7 @@ static __attribute__ ((always_inline)) uint16_t getMovImm(void *symbol_addr) {
     return (arm & (((uint32_t)1 << 16) - 1) << 5) >> 5;
 }
 
-enum MSHookInstruction {
+enum InlineHookInstruction {
     ldr_x16 = 1,
     br_x16,
     ldr_x17,
@@ -75,7 +65,7 @@ enum MSHookInstruction {
     unknownInstruction
 };
 
-static __attribute__ ((always_inline)) enum MSHookInstruction translateInstruction(void *symbol_addr) {
+static __attribute__ ((always_inline)) enum InlineHookInstruction translateInstruction(void *symbol_addr) {
     uint32_t arm = *(uint32_t *)symbol_addr;
     // ldr xt, #imm  (C4.4.5 and C6.2.84)
     uint32_t ldr_register_litetal = (arm & (255 << 24)) >> 24;
@@ -163,8 +153,8 @@ static __attribute__ ((always_inline)) enum MSHookInstruction translateInstructi
 }
 
 __attribute__ ((always_inline))
-_Bool MSHookARMCheck(void *symbol_addr) {
-    enum MSHookInstruction firstInstruction = translateInstruction(symbol_addr);
+_Bool isInlineHooked(void *symbol_addr) {
+    enum InlineHookInstruction firstInstruction = translateInstruction(symbol_addr);
     if (firstInstruction == unknownInstruction) {
         return 0;
     }
@@ -207,17 +197,11 @@ _Bool MSHookARMCheck(void *symbol_addr) {
 
 // (xnu vm feature): mmap ==> vm_region
 __attribute__ ((always_inline))
-void *antiMSHook(void *orig_func) {
-    if (!MSHookARMCheck(orig_func)) {
-        printf("[AntiMSHookFunction] %p is not inline hooked\n", orig_func);
+void *antiInlineHook(void *orig_func) {
+    if (!isInlineHooked(orig_func)) {
         return orig_func;
     }
-    
-    enum MSHookInstruction firstInstruction = translateInstruction(orig_func);
-    if (firstInstruction == unknownInstruction) {
-        assert(false);
-        return NULL;
-    }
+
     void *origFunctionBeginAddr = orig_func;
     switch (firstInstruction) {
     case ldr_x16:
@@ -233,8 +217,7 @@ void *antiMSHook(void *orig_func) {
         origFunctionBeginAddr = (void *)((uintptr_t)origFunctionBeginAddr + 12);
         break;
     default:
-        assert(false);
-        return NULL;
+        return orig_func;
     }
     
     struct vm_region_basic_info_64 info;
@@ -245,7 +228,7 @@ void *antiMSHook(void *orig_func) {
     
     while (1) {
         if (region_address == 0) {
-            return NULL;
+            return orig_func;
         }
         kern_return_t kr = vm_region_64(mach_task_self_, &region_address, &size, VM_REGION_BASIC_INFO, (vm_region_info_64_t)&info, &count, &object_name);
         if (kr == KERN_SUCCESS) {
@@ -337,14 +320,14 @@ void *antiMSHook(void *orig_func) {
             }
             region_address += size;
         } else {
-            return NULL;
+            return orig_func;
         }
     }
-    return NULL;
+    return orig_func;
 }
 
 
 #endif
 
 
-#endif /* AntiMSHookFunction_h */
+#endif /* AntiInlineHook_h */
